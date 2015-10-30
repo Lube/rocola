@@ -2,7 +2,7 @@ class RequestFactory
 {
   constructor() 
   {
-    this.tiposPermitidos = ["Mensaje", "Cancion", "Voto", "Notificacion"];
+    this.tiposPermitidos = ["Mensaje", "Cancion", "Voto", "Notificacion", "Participantes"];
     this.codesPermitidos = ["Voto", "CancionEnd"];
   }
 
@@ -24,7 +24,6 @@ class RequestFactory
 
   createRequest(message, origen)
   {
-    console.log(this.validateMessage(message));
     if (this.validateMessage(message))
     {
         if (message.tipo == "Cancion")
@@ -33,11 +32,15 @@ class RequestFactory
         }
         else if (message.tipo == "Mensaje") 
         {
-            return new Request(message.tipo, origen, null)
+            return new Request(message.tipo, origen, new Mensaje(message.data, message.username, origen, Math.floor((new Date().getTime()) / 1000)));
         }
         else if (message.tipo == "Voto") 
         {
             return new Request(message.tipo, origen, new Voto(message.link, message.value, origen))
+        }
+        else if (message.tipo == "Participantes") 
+        {
+            return new Request(message.tipo, origen, message.data)
         }
         else if (message.tipo == "Notificacion") 
         {
@@ -48,6 +51,27 @@ class RequestFactory
   }
 
 }
+
+class Mensaje
+{
+  constructor(data, username, origen, time) 
+  {
+    this.origen = origen;
+    this.data = data;
+
+    for (var i = connections.length - 1; i >= 0; i--) {
+      if (connections[i].address == origen) {
+        this.username = connections[i].username;
+      }
+    };
+
+    if (typeof(this.username) === 'undefined')
+      this.username = username;
+
+    this.time = time;
+  }
+}
+
 
 class Request
 {
@@ -168,30 +192,71 @@ wsServer = new WebSocketServer({
     autoAcceptConnections: false
 }); 
  
-function originIsAllowed(origin) {
-  return true;
-}
- 
+var clients = [];
 var serverRequestFactory = new RequestFactory();
+var connections = [];
+
+function originIsAllowed(remoteAddress) {
+  if (clients.indexOf(remoteAddress) == -1) {
+    clients.push(remoteAddress);
+    return true;
+  }
+  else
+    return false;
+}
 
 wsServer.on('request', function(request) {
-    if (!originIsAllowed(request.origin)) {
+
+    remoteAddress = request.remoteAddress.slice(7);
+
+    if (!originIsAllowed(remoteAddress)) {
       request.reject();
-      console.log((new Date()) + ' Connection from origin ' + request.origin + ' rejected.');
+      console.log((new Date()) + ' Connection from origin ' + remoteAddress + ' rejected.');
       return;
     }
 
-    var connection = request.accept('echo-protocol', request.origin);
-    console.log((new Date()) + ' ' + request.origin + ' Connection accepted.');
+    var connection = request.accept('echo-protocol', remoteAddress);
+
+    connections.push({connection: connection, address: remoteAddress});
+
+    console.log((new Date()) + ' ' + remoteAddress + ' Connection accepted.');
+
     connection.on('message', function(message) {
+
+        for (var i = connections.length - 1; i >= 0; i--) {
+          if (connections[i].connection == this)
+            var connData = connections[i];
+        };
+
+        
         if (message.type === 'utf8') {
             console.log('Received Message: ' + message.utf8Data);
 
-            incomingRequest = serverRequestFactory.createRequest(JSON.parse(message.utf8Data), request.origin);
+            rawMessage = JSON.parse(message.utf8Data);
+            incomingRequest = serverRequestFactory.createRequest(rawMessage, connData.address);
 
             if (incomingRequest.tipo == "Mensaje")
-            {
-                connection.sendUTF(JSON.stringify(incomingRequest));
+            { 
+                if (typeof(connData.username) === 'undefined'){
+                  connData['username'] = rawMessage.username;
+
+                  var rawParticipantesData = [];
+                  for (var i = connections.length - 1; i >= 0; i--) {
+                    rawParticipantesData.push({username: connections[i].username, address: connections[i].address}) 
+                  };
+
+                  otherRequest = serverRequestFactory.createRequest({tipo: "Participantes" , data: rawParticipantesData}, connData.address);
+
+                  for (var i = connections.length - 1; i >= 0; i--) {
+                      console.log('Sending Message: ' + JSON.stringify(otherRequest));
+                      connections[i].connection.sendUTF(JSON.stringify(otherRequest));
+                  };
+                }
+
+                for (var i = connections.length - 1; i >= 0; i--) {
+                    console.log('Sending Message: ' + JSON.stringify(incomingRequest));
+                    connections[i].connection.sendUTF(JSON.stringify(incomingRequest));
+                };
             }
             else 
             {
@@ -214,6 +279,17 @@ wsServer.on('request', function(request) {
         }       
     });
     connection.on('close', function(reasonCode, description) {
+        if (clients.indexOf(remoteAddress) !== -1) 
+        {
+          clients.splice(clients.indexOf(remoteAddress), 1);
+          
+          for (var i = connections.length - 1; i >= 0; i--) {
+            if (connections[i].connection == this)
+              connections.splice(i,1);
+          };
+
+        }
+
         console.log((new Date()) + ' Peer ' + connection.remoteAddress + ' disconnected.');
     });
 });

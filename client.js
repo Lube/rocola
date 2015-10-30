@@ -1,20 +1,17 @@
-// Used by room.jade. This JS renders a Chat App for every chat room.
-var socket = new WebSocket('ws://localhost:8080', 'echo-protocol') ;
-
 var React = require('react');
 var ReactDOM = require('react-dom');
-var username = "Seba";
+var username = $('#username').val();
 var uiLimit = 60;
 var maxChatMessageLength = '400';
 
-function getCurrUnixTime() {
-    return Math.floor((new Date().getTime()) / 1000);
-}
+
 
 function convertToHHMI(unix_time) {
     var days = Math.floor(unix_time / 86400);
     var hours = Math.floor((unix_time - (days * 86400)) / 3600);
     var minutes = Math.floor((unix_time - ((hours * 3600) + (days * 86400))) / 60);
+
+    hours = hours - 3; //TIMEZONE 
 
     if (hours < 0) {
         hours = 24 + hours;
@@ -40,7 +37,7 @@ var ChatApp = React.createClass({
         // Handle socket chat message from other users
         socket.onmessage = this.messageRecieve;
 
-        return {messages: []};
+        return {messages: [], participantes: []};
     },
     trimMessagesStateIfNecessary: function() {
         var messages = this.state.messages;
@@ -58,22 +55,34 @@ var ChatApp = React.createClass({
             // Create a new msgInfo for this current React app
 
             // Hour:Minute time
-            var HHMITime = convertToHHMI(msgInfo.unix_time);
-            var newMsg = {
-                username: msgInfo.origen,
-                msg: msgInfo.data,
-                time: HHMITime
-            };
 
-            // Here we are concatenating the new emitted message into our ChatApp's messages list
-            var messages = this.state.messages;
-            var newMessages = messages.concat(newMsg);
-            this.setState({messages: newMessages});
-            // this.trimMessagesStateIfNecessary();
+            msgInfo = JSON.parse(msgInfo.data);
+            var HHMITime = convertToHHMI(msgInfo.data.time);
+
+            if (msgInfo.tipo == 'Mensaje')
+            {
+                var newMsg = {
+                    username: msgInfo.data.username,
+                    msg: msgInfo.data.data,
+                    origen: msgInfo.data.origen,
+                    time: HHMITime
+                };
+
+                // Here we are concatenating the new emitted message into our ChatApp's messages list
+                var messages = this.state.messages;
+                var newMessages = messages.concat(newMsg);
+                this.setState({messages: newMessages});
+                this.trimMessagesStateIfNecessary();
+            } 
+            else if (msgInfo.tipo == 'Participantes')
+            {
+                this.setState({participantes: msgInfo.data});
+            }
     },
     render: function() {
         return (
             <div className='chatApp'>
+                <ParticipantesList participantes={this.state.participantes}/>
                 <MessagesList messages={this.state.messages}/>
                 <ChatForm />
             </div>
@@ -98,6 +107,26 @@ var MessagesList = React.createClass({
     }
 });
 
+var ParticipantesList = React.createClass({
+    componentDidMount: function() {
+        var participantesList = this.refs.participantesList;
+    },
+    render: function() {
+        var participantesNodes = this.props.participantes.map(function(participante) {
+            return (<span> {participante.username} </span>);
+        });
+
+        return (
+        <div className="well">
+            <h4> En esta sala:</h4>
+            <ul className='participantesList' ref='participantesList'>
+                {participantesNodes}
+            </ul>
+        </div>
+        );
+    }
+});
+
 var Message = React.createClass({
     componentDidMount: function() {
         var messageDOM = this.refs.message;
@@ -105,16 +134,39 @@ var Message = React.createClass({
     },
     render: function() {
         var msg = this.props.msg;
-        console.log(msg);
-        return (
-            <li className='message' ref='message'>
-                <span className='messageTime'>{msg.time} </span>
-                <b className='username'>{msg.origen}</b> 
-                <span className='messageText'>: {msg.data}</span>
-            </li>
-        );
+
+        if (msg.msg.match(/([a-z\-_0-9\/\:\.]*\.(jpg|jpeg|png|gif))/i) == null)
+            return (
+                <li className='message' ref='message'>
+                    <span className='messageTime'>{msg.time} </span>
+                    <span className='username'>[{msg.origen}]</span> 
+                    <b className='username'>{msg.username}</b> 
+                    <span className='messageText'>: {msg.msg}</span>
+                </li>
+            );
+        else
+           return (
+                <li className='message' ref='message'>
+                    <span className='messageTime'>{msg.time} </span>
+                    <span className='username'>[{msg.origen}]</span> 
+                    <b className='username'>{msg.username}</b> 
+                    <img style={{height: '150px', width: 'auto'}} src={msg.msg} className='messageText' />
+                </li>
+            ); 
     }
 });
+
+
+var WarningMessage = React.createClass({
+      render: function() {
+        return (
+            <div className='alert-danger'>
+                No seas bigote!!
+            </div>
+        );
+    }
+})
+
 
 var ChatForm = React.createClass({
     handleSubmit: function(e) {
@@ -129,7 +181,8 @@ var ChatForm = React.createClass({
 
         var msgInfo = {
             tipo: "Mensaje",
-            message: msgDOMNode.value
+            data: msgDOMNode.value,
+            username: $("#username").val()
         };
 
         socket.send(JSON.stringify(msgInfo));
@@ -144,7 +197,19 @@ var ChatForm = React.createClass({
     }
 })
 
-React.render(
-    <ChatApp uiLimit={uiLimit}/>,
-    document.getElementById('app')
-);
+var socket = new WebSocket('ws://192.168.100.57:8080', 'echo-protocol') ;
+
+socket.onerror = function () {
+    ReactDOM.render(
+        <WarningMessage />,
+        document.getElementById('app')
+    );
+}
+
+socket.onopen = function () {
+    ReactDOM.render(
+        <ChatApp uiLimit={uiLimit}/>,
+        document.getElementById('app')
+    );
+}
+

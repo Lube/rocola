@@ -1,23 +1,18 @@
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-// Used by room.jade. This JS renders a Chat App for every chat room.
 'use strict';
-
-var socket = new WebSocket('ws://localhost:8080', 'echo-protocol');
 
 var React = require('react');
 var ReactDOM = require('react-dom');
-var username = "Seba";
+var username = $('#username').val();
 var uiLimit = 60;
 var maxChatMessageLength = '400';
-
-function getCurrUnixTime() {
-    return Math.floor(new Date().getTime() / 1000);
-}
 
 function convertToHHMI(unix_time) {
     var days = Math.floor(unix_time / 86400);
     var hours = Math.floor((unix_time - days * 86400) / 3600);
     var minutes = Math.floor((unix_time - (hours * 3600 + days * 86400)) / 60);
+
+    hours = hours - 3; //TIMEZONE
 
     if (hours < 0) {
         hours = 24 + hours;
@@ -45,7 +40,7 @@ var ChatApp = React.createClass({
         // Handle socket chat message from other users
         socket.onmessage = this.messageRecieve;
 
-        return { messages: [] };
+        return { messages: [], participantes: [] };
     },
     trimMessagesStateIfNecessary: function trimMessagesStateIfNecessary() {
         var messages = this.state.messages;
@@ -63,23 +58,32 @@ var ChatApp = React.createClass({
         // Create a new msgInfo for this current React app
 
         // Hour:Minute time
-        var HHMITime = convertToHHMI(msgInfo.unix_time);
-        var newMsg = {
-            username: msgInfo.origen,
-            msg: msgInfo.data,
-            time: HHMITime
-        };
 
-        // Here we are concatenating the new emitted message into our ChatApp's messages list
-        var messages = this.state.messages;
-        var newMessages = messages.concat(newMsg);
-        this.setState({ messages: newMessages });
-        // this.trimMessagesStateIfNecessary();
+        msgInfo = JSON.parse(msgInfo.data);
+        var HHMITime = convertToHHMI(msgInfo.data.time);
+
+        if (msgInfo.tipo == 'Mensaje') {
+            var newMsg = {
+                username: msgInfo.data.username,
+                msg: msgInfo.data.data,
+                origen: msgInfo.data.origen,
+                time: HHMITime
+            };
+
+            // Here we are concatenating the new emitted message into our ChatApp's messages list
+            var messages = this.state.messages;
+            var newMessages = messages.concat(newMsg);
+            this.setState({ messages: newMessages });
+            this.trimMessagesStateIfNecessary();
+        } else if (msgInfo.tipo == 'Participantes') {
+            this.setState({ participantes: msgInfo.data });
+        }
     },
     render: function render() {
         return React.createElement(
             'div',
             { className: 'chatApp' },
+            React.createElement(ParticipantesList, { participantes: this.state.participantes }),
             React.createElement(MessagesList, { messages: this.state.messages }),
             React.createElement(ChatForm, null)
         );
@@ -105,6 +109,40 @@ var MessagesList = React.createClass({
     }
 });
 
+var ParticipantesList = React.createClass({
+    displayName: 'ParticipantesList',
+
+    componentDidMount: function componentDidMount() {
+        var participantesList = this.refs.participantesList;
+    },
+    render: function render() {
+        var participantesNodes = this.props.participantes.map(function (participante) {
+            return React.createElement(
+                'span',
+                null,
+                ' ',
+                participante.username,
+                ' '
+            );
+        });
+
+        return React.createElement(
+            'div',
+            { className: 'well' },
+            React.createElement(
+                'h4',
+                null,
+                ' En esta sala:'
+            ),
+            React.createElement(
+                'ul',
+                { className: 'participantesList', ref: 'participantesList' },
+                participantesNodes
+            )
+        );
+    }
+});
+
 var Message = React.createClass({
     displayName: 'Message',
 
@@ -114,8 +152,8 @@ var Message = React.createClass({
     },
     render: function render() {
         var msg = this.props.msg;
-        console.log(msg);
-        return React.createElement(
+
+        if (msg.msg.match(/([a-z\-_0-9\/\:\.]*\.(jpg|jpeg|png|gif))/i) == null) return React.createElement(
             'li',
             { className: 'message', ref: 'message' },
             React.createElement(
@@ -125,16 +163,57 @@ var Message = React.createClass({
                 ' '
             ),
             React.createElement(
+                'span',
+                { className: 'username' },
+                '[',
+                msg.origen,
+                ']'
+            ),
+            React.createElement(
                 'b',
                 { className: 'username' },
-                msg.origen
+                msg.username
             ),
             React.createElement(
                 'span',
                 { className: 'messageText' },
                 ': ',
-                msg.data
+                msg.msg
             )
+        );else return React.createElement(
+            'li',
+            { className: 'message', ref: 'message' },
+            React.createElement(
+                'span',
+                { className: 'messageTime' },
+                msg.time,
+                ' '
+            ),
+            React.createElement(
+                'span',
+                { className: 'username' },
+                '[',
+                msg.origen,
+                ']'
+            ),
+            React.createElement(
+                'b',
+                { className: 'username' },
+                msg.username
+            ),
+            React.createElement('img', { style: { height: '150px', width: 'auto' }, src: msg.msg, className: 'messageText' })
+        );
+    }
+});
+
+var WarningMessage = React.createClass({
+    displayName: 'WarningMessage',
+
+    render: function render() {
+        return React.createElement(
+            'div',
+            { className: 'alert-danger' },
+            'No seas bigote!!'
         );
     }
 });
@@ -154,7 +233,8 @@ var ChatForm = React.createClass({
 
         var msgInfo = {
             tipo: "Mensaje",
-            message: msgDOMNode.value
+            data: msgDOMNode.value,
+            username: $("#username").val()
         };
 
         socket.send(JSON.stringify(msgInfo));
@@ -169,7 +249,15 @@ var ChatForm = React.createClass({
     }
 });
 
-React.render(React.createElement(ChatApp, { uiLimit: uiLimit }), document.getElementById('app'));
+var socket = new WebSocket('ws://192.168.100.57:8080', 'echo-protocol');
+
+socket.onerror = function () {
+    ReactDOM.render(React.createElement(WarningMessage, null), document.getElementById('app'));
+};
+
+socket.onopen = function () {
+    ReactDOM.render(React.createElement(ChatApp, { uiLimit: uiLimit }), document.getElementById('app'));
+};
 
 },{"react":157,"react-dom":2}],2:[function(require,module,exports){
 'use strict';
